@@ -1,0 +1,67 @@
+# RAG MCP Server Git Attributes
+# =============================
+
+# Text files should have LF line endings
+*.py text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.sh text eol=lf
+*.cfg text eol=lf
+*.ini text eol=lf
+*.toml text eol=lf
+
+# Configuration files
+requirements.txt text eol=lf
+config.json text eol=lf
+*.config text eol=lf
+
+# Large binary files (models, databases)
+*.gguf filter=lfs diff=lfs merge=lfs -text
+*.bin filter=lfs diff=lfs merge=lfs -text
+*.safetensors filter=lfs diff=lfs merge=lfs -text
+*.db binary
+*.sqlite binary
+*.sqlite3 binary
+
+# Vector database files
+.vectordb/** binary
+.chroma/** binary
+
+# Document files
+*.pdf binary
+*.docx binary
+*.pptx binary
+*.xlsx binary
+
+# Image files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg text
+
+# Archive files
+*.zip binary
+*.tar.gz binary
+*.rar binary
+*.7z binary
+
+# Export diff and merge for Python files
+*.py diff=python
+
+# Markdown files
+*.md diff=markdown
+
+# Treat all files in these directories as binary
+.model/** binary
+.vectordb/** binary
+.file_tracker/** binary
+
+# Log files should not be considered for merge conflicts
+*.log merge=ours
+*.out merge=ours
+*.err merge=ours

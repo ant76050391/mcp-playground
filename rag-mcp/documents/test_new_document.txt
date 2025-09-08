@@ -1,0 +1,13 @@
+새로운 텍스트 추출 시스템 테스트
+
+이 문서는 실시간 파일 모니터링과 텍스트 추출 시스템을 테스트하기 위해 작성된 새로운 문서입니다.
+
+주요 기능:
+1. PyMuPDF4LLM을 이용한 PDF 텍스트 추출
+2. python-docx를 이용한 Word 문서 처리
+3. BeautifulSoup4를 이용한 HTML 파싱
+4. Polars를 이용한 고성능 CSV 데이터 처리
+
+이 문서가 추가되면 watchfiles가 자동으로 감지하고 TextExtractionEngine이 텍스트를 추출한 후, BGE-M3 Korean 모델을 사용해 임베딩을 생성해야 합니다.
+
+테스트 키워드: 파일모니터링, 텍스트추출, 임베딩, 하이브리드검색

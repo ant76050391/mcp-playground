@@ -1,0 +1,42 @@
+{
+  "model": {
+    "name": "bge-m3-korean",
+    "version": "q4_k_m-2",
+    "context_window": 8192
+  },
+  "server": {
+    "name": "rag-mcp",
+    "version": "0.2.0"
+  },
+  "embedding": {
+    "dimension": 1024,
+    "batch_size": 32
+  },
+  "hybrid_search": {
+    "enabled": true,
+    "dense_top_k": 50,
+    "sparse_top_k": 50,
+    "rerank_candidates": 30,
+    "fusion_method": "rrf",
+    "final_top_k": 10
+  },
+  "bm25": {
+    "tokenizer": "okt",
+    "korean_optimization": true,
+    "min_token_length": 2
+  },
+  "reranker": {
+    "enabled": true,
+    "model_name": "bge-reranker-v2-m3-ko",
+    "korean_optimization": true,
+    "max_query_tokens": 512,
+    "max_doc_tokens": 7168
+  },
+  "watchfiles": {
+    "enabled": true,
+    "watch_recursive": true,
+    "ignore_paths": [".git", "__pycache__", ".DS_Store", ".file_tracker"],
+    "debounce_ms": 100,
+    "batch_delay_ms": 500
+  }
+}

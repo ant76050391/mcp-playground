@@ -1,0 +1,11 @@
+BGE 모델과 임베딩 기술
+
+BGE (Beijing Academy of Artificial Intelligence General Embedding) 모델은 중국 베이징 인공지능 연구원에서 개발한 다국어 임베딩 모델입니다.
+
+BGE-M3는 다음과 같은 특징을 가지고 있습니다:
+- Multi-Functionality: Dense, Sparse, Multi-Vector 검색 지원
+- Multi-Linguality: 100개 이상의 언어 지원
+- Multi-Granularity: 짧은 문장부터 8192 토큰까지 처리 가능
+
+한국어 문서 검색에서 BGE 모델은 의미적 유사도를 효과적으로 계산할 수 있습니다.
+특히 동의어나 유사한 의미의 단어들을 잘 매칭해주는 장점이 있습니다.

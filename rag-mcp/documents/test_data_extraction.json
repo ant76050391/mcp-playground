@@ -1,0 +1,24 @@
+{
+  "test_type": "JSON 데이터 추출 테스트",
+  "created_at": "2025-09-08",
+  "description": "이 JSON 파일은 DataExtractor의 JSON 파싱 기능을 테스트하기 위해 작성되었습니다.",
+  "features": {
+    "text_extraction": {
+      "pdf": "PyMuPDF4LLM 기반 고성능 PDF 처리",
+      "office": "python-docx, python-pptx, openpyxl 지원",
+      "web": "BeautifulSoup4 HTML/XML 파싱",
+      "data": "Polars 고성능 CSV 처리, JSON/YAML 파싱"
+    },
+    "hybrid_search": {
+      "dense": "BGE-M3 Korean 임베딩",
+      "sparse": "BM25 키워드 검색",
+      "reranking": "BGE-Reranker-v2-M3-Ko"
+    }
+  },
+  "performance": {
+    "text_extraction_speed": "100MB/s",
+    "pdf_processing": "10-50 pages/s",
+    "office_processing": "5-20 docs/s"
+  },
+  "test_keywords": ["JSON파싱", "구조분석", "데이터추출", "메타데이터"]
+}

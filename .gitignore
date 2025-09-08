@@ -1,0 +1,207 @@
+# RAG MCP Server .gitignore
+# =====================================
+
+# Python
+# ------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+# ------------------
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# Model Files (Large Binary Files)
+# --------------------------------
+# GGUF model files (typically 400MB+ each)
+*.gguf
+*.bin
+*.safetensors
+.model/
+models/
+checkpoints/
+
+# Vector Database Files
+# --------------------
+# ChromaDB and other vector databases
+.vectordb/
+.chroma/
+*.db
+*.sqlite
+*.sqlite3
+chromadb.log
+vector_store/
+embeddings_cache/
+
+# File Tracking & Monitoring
+# --------------------------
+.file_tracker/
+*.tracker
+*.monitoring
+
+# IDE & Editors
+# -------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Logs & Debug Files
+# -----------------
+*.log
+*.out
+*.err
+logs/
+debug.log
+server.log
+extraction.log
+
+# Temporary Files
+# --------------
+*.tmp
+*.temp
+.tmp/
+temp/
+*.cache
+.cache/
+
+# Test Files & Coverage
+# ---------------------
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.coverage.*
+pytest.ini
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# Documentation Build
+# -------------------
+docs/_build/
+site/
+.readthedocs.yml
+
+# Environment Variables
+# --------------------
+.env
+.env.local
+.env.*.local
+*.env
+
+# OS Generated Files
+# -----------------
+.DS_Store?
+ehthumbs.db
+Icon?
+Thumbs.db
+*.lnk
+
+# Jupyter Notebooks
+# -----------------
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+profile_default/
+ipython_config.py
+
+# Package Managers
+# ---------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+
+# Distribution & Deployment
+# ------------------------
+*.tar.gz
+*.zip
+*.rar
+*.7z
+deploy/
+deployment/
+docker-compose.override.yml
+
+# Project Specific
+# ----------------
+# Large document collections for testing
+test_documents/
+sample_docs/
+large_files/
+
+# Backup files
+*.backup
+*.bak
+*.old
+
+# Local configuration overrides
+config.local.json
+settings.local.json
+local_config.py
+
+# Performance profiling
+*.prof
+*.cprof
+profile_results/
+
+# macOS specific
+.AppleDouble
+.LSOverride
+.Spotlight-V100
+.Trashes
+.fseventsd
+.DocumentRevisions-V100
+.TemporaryItems
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Windows specific
+desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msm
+*.msp
+
+# Linux specific
+*~
+.nfs*
+
+# Ignore all hidden files/dirs except those we want to keep
+.*
+!.gitignore
+!.gitattributes
+!.github/
+!.env.example

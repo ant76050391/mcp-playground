@@ -1,0 +1,44 @@
+{
+  "project_name": "RAG MCP Server",
+  "version": "1.0.0",
+  "description": "다중 포맷 텍스트 추출 및 하이브리드 검색을 지원하는 RAG 시스템",
+  "features": {
+    "text_extraction": {
+      "supported_formats": [
+        "PDF", "Word", "PowerPoint", "Excel", 
+        "HTML", "XML", "Markdown", "CSV", "JSON", "YAML"
+      ],
+      "extractors": {
+        "pdf": "PyMuPDF4LLM",
+        "office": "python-docx, python-pptx, openpyxl",
+        "web": "BeautifulSoup4",
+        "data": "polars, pandas"
+      }
+    },
+    "hybrid_search": {
+      "dense_retrieval": "BGE-M3-Korean",
+      "sparse_retrieval": "BM25 + Korean tokenizer",
+      "reranking": "BGE-Reranker-v2-M3-Ko"
+    },
+    "file_monitoring": {
+      "library": "watchfiles",
+      "real_time": true,
+      "auto_reindexing": true
+    }
+  },
+  "performance": {
+    "max_workers": 32,
+    "max_file_size_mb": 100,
+    "gpu_acceleration": "Metal (Apple M4 Pro)",
+    "extraction_speed": {
+      "text": "100MB/s",
+      "pdf": "10-50 pages/s",
+      "office": "5-20 docs/s"
+    }
+  },
+  "metadata": {
+    "author": "RAG MCP Development Team",
+    "created_at": "2025-09-08",
+    "last_updated": "2025-09-08"
+  }
+}
