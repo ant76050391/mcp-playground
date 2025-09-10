@@ -1,0 +1,20 @@
+This is a test document for ChromaDB integration validation.
+
+The RAG MCP Server now supports persistent vector storage using ChromaDB, which provides:
+
+1. Efficient vector similarity search with cosine similarity
+2. Persistent storage with automatic content change detection  
+3. Metadata management with file paths, types, and extraction information
+4. Batch operations for optimal performance
+5. Real-time updates when files are modified
+
+This document should be automatically detected by the file monitor, extracted using the text extraction engine, embedded using the BGE-M3 Korean model, and stored in the ChromaDB vector store.
+
+Keywords for testing: ChromaDB, vector search, embedding, similarity, persistence, RAG, MCP Server, Korean language processing, BGE-M3.
+
+Testing search functionality with various Korean phrases:
+- 안녕하세요 (Hello)  
+- 벡터 검색 (Vector search)
+- 데이터베이스 (Database)
+- 자연어 처리 (Natural language processing)
+- 기계학습 (Machine learning)

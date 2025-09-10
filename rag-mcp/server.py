@@ -26,6 +26,9 @@ from mcp.types import (
 # Text extraction module
 from text_extraction import TextExtractionEngine
 
+# Vector store module
+from vector_store import ChromaDBVectorStore
+
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -493,6 +496,7 @@ class RAGServer:
         self.config = {}
         self.file_monitor = None
         self.text_extractor = None  # Multi-format text extraction engine
+        self.vector_store = None  # ChromaDB vector storage
         self.documents = []  # Store documents for BM25 and reranker
         self.model_path = Path(__file__).parent / ".model" / "bge-m3-korean-q4_k_m-2.gguf"
         self.reranker_path = Path(__file__).parent / ".model" / "bge-reranker-v2-m3-ko-q4_k_m.gguf"
@@ -537,6 +541,35 @@ class RAGServer:
             self.text_extractor = TextExtractionEngine(extraction_config)
             extractor_elapsed = time.time() - extractor_start
             logger.info(f"[TIMER] Text extraction engine initialization took {extractor_elapsed:.3f}s")
+            
+            # Initialize ChromaDB vector store
+            vector_start = time.time()
+            logger.info("Initializing ChromaDB vector store...")
+            try:
+                vector_config = self.config.get('vector_store', {})
+                db_path = vector_config.get('db_path', '.vectordb')
+                collection_name = vector_config.get('collection_name', 'rag_documents')
+                
+                self.vector_store = ChromaDBVectorStore(
+                    db_path=db_path,
+                    collection_name=collection_name
+                )
+                logger.info(f"ChromaDB vector store initialized at: {db_path}")
+                
+                # Get collection stats
+                stats = self.vector_store.get_collection_stats()
+                logger.info(f"Vector store stats: {stats}")
+                
+            except ImportError:
+                logger.warning("ChromaDB not available, falling back to naive dense search")
+                self.vector_store = None
+            except Exception as e:
+                logger.error(f"Failed to initialize vector store: {e}")
+                logger.warning("Falling back to naive dense search")
+                self.vector_store = None
+                
+            vector_elapsed = time.time() - vector_start
+            logger.info(f"[TIMER] Vector store initialization took {vector_elapsed:.3f}s")
             
             # Initialize file monitor
             monitor_start = time.time()
@@ -626,13 +659,37 @@ class RAGServer:
                     progress_callback=progress_callback
                 )
                 
-                # Process successful extractions
+                # Process successful extractions and populate vector store
+                vector_docs = []
                 for doc in extraction_result.documents:
                     if doc.success and doc.content.strip():
                         # Use cleaned content for RAG
                         clean_content = doc.get_clean_content()
                         if clean_content:
                             self.documents.append(clean_content)
+                            
+                            # Prepare document for vector store
+                            if self.vector_store:
+                                try:
+                                    embedding = self.embedding_model.encode(clean_content[:1000])  # Limit context for embedding
+                                    
+                                    # Create metadata
+                                    metadata = self.vector_store.create_document_metadata(
+                                        file_path=doc.file_path,
+                                        file_type=str(doc.metadata.file_type.value) if hasattr(doc.metadata.file_type, 'value') else str(doc.metadata.file_type),
+                                        extractor_type=doc.metadata.extractor_name,
+                                        chunk_index=0
+                                    )
+                                    
+                                    vector_docs.append({
+                                        'content': clean_content,
+                                        'file_path': doc.file_path,
+                                        'embedding': embedding,
+                                        'metadata': metadata
+                                    })
+                                    
+                                except Exception as e:
+                                    logger.warning(f"Failed to prepare vector document for {doc.file_path}: {e}")
                         else:
                             logger.warning(f"No clean content extracted from {doc.file_path}")
                     elif not doc.success:
@@ -640,6 +697,38 @@ class RAGServer:
                 
                 logger.info(f"Extracted text from {len(self.documents)} documents")
                 logger.info(f"Success rate: {extraction_result.success_rate:.1f}%")
+                
+                # Populate ChromaDB vector store with initial documents using efficient batch upsert
+                if self.vector_store and vector_docs:
+                    try:
+                        vector_start = time.time()
+                        
+                        # Create VectorDocument objects for batch upsert
+                        from vector_store.chroma_store import VectorDocument
+                        vector_documents = []
+                        
+                        for doc_data in vector_docs:
+                            vector_doc = VectorDocument(
+                                id="",  # Let the vector store generate the ID
+                                content=doc_data['content'],
+                                embedding=doc_data['embedding'],
+                                metadata=doc_data['metadata']
+                            )
+                            vector_documents.append(vector_doc)
+                        
+                        # Efficient batch upsert
+                        upserted_ids = self.vector_store.upsert_documents(vector_documents)
+                        
+                        vector_elapsed = time.time() - vector_start
+                        logger.info(f"🗂️  Populated ChromaDB with {len(upserted_ids)} documents (batch upsert)")
+                        logger.info(f"[TIMER] Initial vector store population took {vector_elapsed:.3f}s")
+                        
+                        # Log vector store stats
+                        stats = self.vector_store.get_collection_stats()
+                        logger.info(f"📊 Vector store total documents: {stats['total_documents']}")
+                        
+                    except Exception as e:
+                        logger.error(f"Failed to populate vector store: {e}")
                 
                 # Log extraction statistics
                 stats = self.text_extractor.get_extraction_stats()
@@ -673,15 +762,43 @@ class RAGServer:
             raise
     
     async def _dense_search(self, query: str, top_k: int = 50) -> List[tuple]:
-        """Dense retrieval using BGE-M3 embedding"""
-        if not self.embedding_model or not self.documents:
+        """Dense retrieval using BGE-M3 embedding with ChromaDB or fallback to naive search"""
+        if not self.embedding_model:
             return []
         
         try:
             query_embedding = self.embedding_model.encode(query)
             
-            # Simple cosine similarity calculation (naive implementation)
-            # In a real system, this would use ChromaDB
+            # Use ChromaDB if available
+            if self.vector_store:
+                results = self.vector_store.search(
+                    query_embeddings=[query_embedding],
+                    n_results=min(top_k, 100),  # Reasonable limit
+                    include=['documents', 'metadatas', 'distances']
+                )
+                
+                # Convert ChromaDB results to document indices
+                scores = []
+                if results.get('ids') and results.get('distances'):
+                    for i, (doc_id, distance) in enumerate(zip(results['ids'][0], results['distances'][0])):
+                        # Convert distance to similarity score (ChromaDB returns cosine distance)
+                        similarity = 1 - distance
+                        
+                        # Find document index in self.documents by content matching
+                        if results.get('documents') and i < len(results['documents'][0]):
+                            doc_content = results['documents'][0][i]
+                            # Find matching document in self.documents
+                            for doc_idx, doc in enumerate(self.documents):
+                                if doc.startswith(doc_content[:100]):  # Match by content prefix
+                                    scores.append((doc_idx, similarity))
+                                    break
+                
+                return scores[:top_k]
+            
+            # Fallback to naive search if ChromaDB not available
+            if not self.documents:
+                return []
+                
             scores = []
             for i, doc in enumerate(self.documents):
                 doc_embedding = self.embedding_model.encode(doc[:1000])  # Truncate for speed
@@ -723,15 +840,71 @@ class RAGServer:
                 progress_callback=progress_callback
             )
             
-            # Process successful extractions
+            # Process successful extractions and update vector store
+            vector_docs = []
             for doc in extraction_result.documents:
                 if doc.success and doc.content.strip():
                     clean_content = doc.get_clean_content()
                     if clean_content:
                         self.documents.append(clean_content)
+                        
+                        # Prepare document for vector store
+                        if self.vector_store and self.embedding_model:
+                            try:
+                                embedding = self.embedding_model.encode(clean_content[:1000])  # Limit context for embedding
+                                
+                                # Create metadata
+                                metadata = self.vector_store.create_document_metadata(
+                                    file_path=doc.file_path,
+                                    file_type=str(doc.metadata.file_type.value) if hasattr(doc.metadata.file_type, 'value') else str(doc.metadata.file_type),
+                                    extractor_type=doc.metadata.extractor_name,
+                                    chunk_index=0
+                                )
+                                
+                                vector_docs.append({
+                                    'content': clean_content,
+                                    'file_path': doc.file_path,
+                                    'embedding': embedding,
+                                    'metadata': metadata
+                                })
+                                
+                            except Exception as e:
+                                logger.warning(f"Failed to prepare vector document for {doc.file_path}: {e}")
             
             logger.info(f"📚 Re-extracted {len(self.documents)} documents")
             logger.info(f"📊 Extraction success rate: {extraction_result.success_rate:.1f}%")
+            
+            # Update ChromaDB vector store with efficient batch upsert
+            if self.vector_store and vector_docs:
+                try:
+                    vector_start = time.time()
+                    
+                    # Create VectorDocument objects for batch upsert
+                    from vector_store.chroma_store import VectorDocument
+                    vector_documents = []
+                    
+                    for doc_data in vector_docs:
+                        vector_doc = VectorDocument(
+                            id="",  # Let the vector store generate the ID
+                            content=doc_data['content'],
+                            embedding=doc_data['embedding'],
+                            metadata=doc_data['metadata']
+                        )
+                        vector_documents.append(vector_doc)
+                    
+                    # Efficient batch upsert
+                    upserted_ids = self.vector_store.upsert_documents(vector_documents)
+                    
+                    vector_elapsed = time.time() - vector_start
+                    logger.info(f"🗂️  Updated {len(upserted_ids)} documents in ChromaDB vector store (batch upsert)")
+                    logger.info(f"[TIMER] Vector store update took {vector_elapsed:.3f}s")
+                    
+                    # Log vector store stats
+                    stats = self.vector_store.get_collection_stats()
+                    logger.info(f"📊 Vector store total documents: {stats['total_documents']}")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to update vector store: {e}")
             
             # Rebuild BM25 index if available
             if self.documents and self.bm25_retriever:
