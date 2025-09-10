@@ -55,7 +55,6 @@ checkpoints/
 *.sqlite
 *.sqlite3
 chromadb.log
-vector_store/
 embeddings_cache/
 
 # File Tracking & Monitoring
