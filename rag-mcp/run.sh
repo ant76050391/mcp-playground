@@ -25,28 +25,59 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     echo "- GPU: $(system_profiler SPDisplaysDataType 2>/dev/null | grep 'Chipset Model:' | head -1 | cut -d: -f2 | xargs || echo 'Unknown')"
 fi
 
-# Check Java version for KoNLPy compatibility
+# Check and setup Java for KoNLPy compatibility
 echo ""
-echo "Checking Java for Korean tokenizer (KoNLPy):"
-if command -v java &> /dev/null; then
-    JAVA_VERSION=$(java -version 2>&1 | head -n 1 | cut -d'"' -f2 | cut -d'.' -f1)
-    echo "- Java version: $(java -version 2>&1 | head -n 1)"
-    
-    if [ "$JAVA_VERSION" -ge 17 ]; then
-        echo "⚠️  WARNING: Java $JAVA_VERSION detected. KoNLPy works best with Java 8-11."
-        echo "   Korean BM25 tokenizer will fall back to regex-based tokenization."
-        echo "   For better Korean text analysis, consider installing Java 11:"
-        if [[ "$OSTYPE" == "darwin"* ]]; then
-            echo "   brew install openjdk@11"
-        fi
+echo "Setting up Java for Korean tokenizer (KoNLPy):"
+
+# Check if OpenJDK 11 is already installed via Homebrew
+JAVA11_INSTALLED=false
+if [[ "$OSTYPE" == "darwin"* ]] && command -v brew &> /dev/null; then
+    if brew list openjdk@11 &> /dev/null; then
+        JAVA11_INSTALLED=true
+        echo "✅ OpenJDK 11 already installed via Homebrew"
+    fi
+fi
+
+# Install OpenJDK 11 if not present and on macOS with Homebrew
+if [ "$JAVA11_INSTALLED" = false ] && [[ "$OSTYPE" == "darwin"* ]] && command -v brew &> /dev/null; then
+    echo "📦 Installing OpenJDK 11 for KoNLPy compatibility..."
+    if brew install openjdk@11; then
+        echo "✅ OpenJDK 11 installed successfully"
+        JAVA11_INSTALLED=true
     else
-        echo "✅ Java version compatible with KoNLPy"
+        echo "❌ Failed to install OpenJDK 11"
+    fi
+fi
+
+# Setup JAVA_HOME for this session if OpenJDK 11 is available
+if [ "$JAVA11_INSTALLED" = true ]; then
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # Apple Silicon or Intel Mac paths
+        if [ -d "/opt/homebrew/opt/openjdk@11" ]; then
+            export JAVA_HOME="/opt/homebrew/opt/openjdk@11"
+        elif [ -d "/usr/local/opt/openjdk@11" ]; then
+            export JAVA_HOME="/usr/local/opt/openjdk@11"
+        fi
+        
+        if [ -n "$JAVA_HOME" ]; then
+            export PATH="$JAVA_HOME/bin:$PATH"
+            echo "🔧 JAVA_HOME set to: $JAVA_HOME"
+            echo "- Java version: $(java -version 2>&1 | head -n 1)"
+            echo "✅ Korean BM25 tokenizer will use KoNLPy with proper Java version"
+        fi
     fi
 else
-    echo "⚠️  Java not found. Korean BM25 will use regex tokenizer."
-    echo "   For better Korean text analysis, install Java 11:"
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        echo "   brew install openjdk@11"
+    # Check current Java version
+    if command -v java &> /dev/null; then
+        JAVA_VERSION=$(java -version 2>&1 | head -n 1 | cut -d'"' -f2 | cut -d'.' -f1)
+        echo "- Current Java version: $(java -version 2>&1 | head -n 1)"
+        
+        if [ "$JAVA_VERSION" -ge 17 ]; then
+            echo "⚠️  Java $JAVA_VERSION may have compatibility issues with KoNLPy"
+            echo "   Korean BM25 tokenizer will fall back to regex-based tokenization"
+        fi
+    else
+        echo "⚠️  Java not found. Korean BM25 will use regex tokenizer"
     fi
 fi
 echo ""
