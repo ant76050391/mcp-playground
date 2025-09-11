@@ -431,51 +431,191 @@ results = self.vector_store.search(
 - ✅ **문서 검색**: 개별 문서 ID로 조회 성공 (1024차원 임베딩)
 - ✅ **메타데이터**: 8개 키 완벽 관리 (file_path, file_type, content_hash 등)
 
-## 🚧 다음 단계 (개선 필요)
+## 🚧 다음 단계 구현 계획 (우선순위별 로드맵)
 
-### 1. **파일 변경 세분화 처리** ⭐ **HIGH PRIORITY**  
-**현재 상태**: 전체 재추출 방식 (효율성 개선 필요)
-**필요 개선**:
+### **🔴 Phase 1: 파일 변경 세분화 처리** ⭐ **HIGH PRIORITY**  
+**목표**: 전체 재추출 → 개별 파일 차등 처리 (90%+ 성능 개선)
+**예상 효과**: 파일 1개 변경 시 6.6초 → 0.5초
+
+#### 📋 구현 단계별 계획
+**Step 1-1: _handle_file_changes 메서드 리팩토링**
 ```python
-# 현재: 변경 감지 시 전체 재처리 (ChromaDB 포함)
+# 현재: 변경 감지 시 전체 재처리 (비효율)
 self.documents = []
 extraction_result = self.text_extractor.extract_directory(...)
-self.vector_store.upsert_documents(vector_documents)  # 전체 재처리
+self.vector_store.upsert_documents(vector_documents)  # 전체 재구축
 
-# 목표: 변경별 차등 처리
-if change_type == 'added':
-    extract_and_add_document(file_path)  # 새 문서만 임베딩
-    vector_store.upsert_document(doc_id, embedding, metadata)
-elif change_type == 'modified':
-    update_document_embedding(file_path)  # 수정 문서만 재임베딩
-    vector_store.delete_documents_by_path(file_path) + upsert_new
-elif change_type == 'deleted':
-    vector_store.delete_documents_by_path(file_path)  # ChromaDB에서만 삭제
+# 목표: 변경별 차등 처리 로직
+async def _handle_file_changes_optimized(self, changes: Dict[str, List]):
+    for change_type, file_paths in changes.items():
+        if change_type == 'added':
+            await self._process_added_files(file_paths)
+        elif change_type == 'modified': 
+            await self._process_modified_files(file_paths)
+        elif change_type == 'deleted':
+            await self._process_deleted_files(file_paths)
 ```
 
-### 2. **청킹 시스템 구현** ⭐ **MEDIUM PRIORITY**
-- **의미적 청킹**: 대용량 문서 의미 단위별 분할 처리
-- **청크 메타데이터**: chunk_index, start_position, end_position 관리
-- **오버랩 청킹**: 문맥 보존을 위한 청크 간 오버랩
-- **청크별 검색**: 문서 내 정확한 위치 반환
+**Step 1-2: ChromaDBVectorStore 개별 삭제 메서드 추가**
+```python
+# 새 메서드 구현 필요
+def delete_documents_by_path(self, file_path: str) -> bool:
+    """특정 파일 경로의 모든 문서 삭제"""
+    
+def get_documents_by_path(self, file_path: str) -> List[str]:
+    """파일 경로로 문서 ID 조회"""
+```
 
-### 3. **고급 검색 기능 확장** ⭐ **MEDIUM PRIORITY**
-- **하이브리드 검색 가중치 조정**: Dense/Sparse/Rerank 비율 최적화
-- **필터링 검색**: 파일 타입, 날짜, 크기별 조건부 검색
-- **검색 결과 하이라이팅**: 매칭 부분 강조 표시
-- **검색 히스토리 및 분석**: 쿼리 패턴 분석
+**Step 1-3: 파일별 고유 ID 체계 구축**
+```python
+# VectorDocument ID 표준화
+def generate_document_id(file_path: str, chunk_index: int = 0) -> str:
+    return f"doc_{hashlib.md5(file_path.encode()).hexdigest()[:8]}_{chunk_index}"
+```
 
-### 4. **성능 최적화** ⭐ **LOW PRIORITY**
-- **임베딩 캐싱**: 동일 content hash 임베딩 재사용
-- **비동기 백그라운드 처리**: 대량 파일 처리 시 응답성 개선
-- **메모리 최적화**: 배치 크기 동적 조정
-- **병렬 처리 확장**: GPU 메모리 활용 최적화
+**Step 1-4: 성능 테스트 및 검증**
+- 1개 파일 변경 시: 전체 재구축 vs 차등 처리 속도 비교
+- 메모리 사용량 모니터링
+- BM25 인덱스 부분 업데이트 구현
 
-### 5. **관리 및 모니터링 도구** ⭐ **LOW PRIORITY**
-- **ChromaDB 관리 도구**: 컬렉션 상태, 문서 수, 메타데이터 조회
-- **벡터 검색 성능 분석**: 쿼리 응답시간, 유사도 분포 분석
-- **설정 관리 UI**: 하이브리드 검색 파라미터 동적 조정
-- **시스템 상태 대시보드**: 실시간 성능 모니터링
+#### ⏱️ 예상 작업 시간
+- **Phase 1 구현**: 2-3시간 (핵심 로직)
+- **테스트 및 검증**: 1시간
+- **문서화 업데이트**: 30분
+- **총 소요시간**: 3.5-4.5시간
+
+---
+
+### **🟡 Phase 2: 청킹 시스템 구현** ⭐ **MEDIUM PRIORITY**
+**목표**: 대용량 문서 (500+ 페이지 PDF) 처리 개선
+**예상 효과**: 문서 내 정확한 위치 검색, 컨텍스트 향상
+
+#### 📋 구현 단계별 계획  
+**Step 2-1: 의미적 청킹 알고리즘**
+```python
+class SemanticChunker:
+    def __init__(self, chunk_size=1000, overlap=100):
+        self.chunk_size = chunk_size
+        self.overlap = overlap
+    
+    def chunk_document(self, content: str, file_path: str) -> List[ChunkInfo]:
+        # Sentence boundary detection
+        # Page boundary consideration (for PDF)
+        # Semantic coherence optimization
+```
+
+**Step 2-2: 청크 메타데이터 확장**
+```python
+@dataclass  
+class ChunkInfo:
+    chunk_index: int
+    start_position: int
+    end_position: int
+    page_number: Optional[int]
+    parent_document_id: str
+    chunk_type: str  # "page", "section", "paragraph"
+```
+
+**Step 2-3: 청크별 검색 결과 개선**
+- 문서 내 정확한 위치 반환
+- 인접 청크 컨텍스트 제공  
+- 청크 간 연결 정보 관리
+
+---
+
+### **🟡 Phase 3: 고급 검색 기능 확장** ⭐ **MEDIUM PRIORITY**
+
+#### **3-1: 필터링 검색 시스템**
+```python
+# 새 MCP 도구 추가
+def search_documents_filtered(
+    query: str,
+    file_types: List[str] = None,  # ["pdf", "docx"]
+    date_range: Tuple[str, str] = None,  # ("2024-01-01", "2024-12-31")
+    min_similarity: float = 0.3
+):
+```
+
+#### **3-2: 하이브리드 검색 가중치 동적 조정**  
+```python
+# config.json 확장
+"hybrid_search": {
+    "dense_weight": 0.4,    # Dense 검색 가중치
+    "sparse_weight": 0.3,   # Sparse 검색 가중치  
+    "rerank_weight": 0.3    # Rerank 가중치
+}
+```
+
+#### **3-3: 검색 결과 하이라이팅**
+- 키워드 매칭 부분 강조
+- 의미적 유사 구간 표시
+- HTML/Markdown 형식 출력 지원
+
+---
+
+### **🟢 Phase 4: 성능 최적화** ⭐ **LOW PRIORITY**
+
+#### **4-1: 임베딩 캐싱 시스템**
+```python
+class EmbeddingCache:
+    def __init__(self, cache_dir: str = ".embedding_cache"):
+        # content_hash → embedding 매핑
+        # LRU 캐시 구현
+        # 디스크 영구 저장
+```
+
+#### **4-2: 비동기 백그라운드 처리**
+- 대량 파일 처리 시 응답성 보장
+- 진행률 표시 및 상태 관리
+- 작업 큐 시스템 구현
+
+#### **4-3: GPU 메모리 최적화**
+- 배치 크기 동적 조정
+- 메모리 사용량 모니터링
+- OOM 방지 로직 구현
+
+---
+
+### **🟢 Phase 5: 관리 및 모니터링 도구** ⭐ **LOW PRIORITY**
+
+#### **5-1: ChromaDB 관리 CLI 도구**
+```bash
+# 새로운 관리 스크립트
+./manage_chromadb.py --stats          # 컬렉션 통계
+./manage_chromadb.py --cleanup        # 고아 문서 정리  
+./manage_chromadb.py --backup         # 벡터 DB 백업
+./manage_chromadb.py --query "search" # 직접 쿼리 테스트
+```
+
+#### **5-2: 성능 분석 대시보드**
+- 검색 응답 시간 히스토그램
+- 쿼리 패턴 분석
+- 유사도 점수 분포
+- 시스템 리소스 모니터링
+
+#### **5-3: 동적 설정 관리**  
+- 런타임 파라미터 조정
+- A/B 테스트 지원
+- 설정 변경 히스토리
+
+---
+
+## 🎯 **Phase 1 즉시 착수 권장사항**
+
+### **핵심 개선 포인트**
+1. **파일 1개 변경 → 전체 재구축** (현재 6.6초)
+2. **파일 1개 변경 → 개별 처리** (목표 0.5초)
+3. **90%+ 성능 향상** 달성 가능
+
+### **비즈니스 임팩트**
+- **사용자 경험**: 드래그 앤 드랍 후 즉시 검색 가능
+- **확장성**: 대용량 문서 컬렉션 실시간 관리
+- **효율성**: 시스템 리소스 절약
+
+### **기술적 위험도**
+- **낮음**: 기존 ChromaDB API 활용
+- **테스트 용이**: 개별 파일 단위 검증 가능
+- **롤백 가능**: 기존 로직 보존하며 점진적 교체
 
 ## 📝 실행 방법
 ```bash
@@ -609,9 +749,9 @@ python server.py
 ```
 
 ---
-**최종 업데이트**: 2025-09-10
-**버전**: v0.4.0 - ChromaDB 영구 벡터 저장소 통합 완성
-**상태**: ✅ **엔터프라이즈 준비 완료 - 완전한 벡터 RAG 시스템** 
+**최종 업데이트**: 2025-09-11  
+**버전**: v0.4.1 - Phase 기반 구현 계획 및 우선순위 로드맵 수립
+**상태**: ✅ **엔터프라이즈 준비 완료** + 📋 **다음 단계 구현 계획 완성** 
 
 ### 🎯 주요 완성 기능:
 - **✅ ChromaDB 영구 벡터 저장소**: 고성능 벡터 검색, 메타데이터 관리, 자동 업데이트 ⭐ **NEW**
