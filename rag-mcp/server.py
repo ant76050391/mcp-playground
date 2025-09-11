@@ -119,17 +119,23 @@ class KoreanBM25Retriever:
         try:
             if self.tokenizer_type == "okt":
                 from konlpy.tag import Okt
+                # JVM 초기화 중 오류가 발생할 수 있으므로 즉시 테스트
                 self.tokenizer = Okt()
+                # 간단한 테스트로 정상 작동 확인
+                test_result = self.tokenizer.morphs("테스트")
                 logger.info("Korean BM25: Using Okt tokenizer")
             elif self.tokenizer_type == "kkma":
                 from konlpy.tag import Kkma
                 self.tokenizer = Kkma()
+                # 간단한 테스트로 정상 작동 확인
+                test_result = self.tokenizer.morphs("테스트") 
                 logger.info("Korean BM25: Using Kkma tokenizer")
             else:
                 raise ValueError(f"Unsupported tokenizer: {self.tokenizer_type}")
         except Exception as e:
             logger.error(f"Failed to initialize Korean tokenizer: {e}")
-            logger.error("Falling back to simple regex tokenizer")
+            logger.warning("This may be due to Java version compatibility (KoNLPy requires Java 8-11, current Java 24)")
+            logger.info("Falling back to enhanced regex tokenizer")
             self.tokenizer = None
             self.tokenizer_type = "regex"
         
@@ -455,8 +461,46 @@ class WatchFilesMonitor:
         except ImportError:
             return 'modified'  # fallback
     
+    async def _is_file_stable(self, file_path: Path, wait_time: float = 3.0) -> bool:
+        """파일이 안정적으로 복사 완료되었는지 확인 (드래그 앤 드랍 대응)"""
+        try:
+            if not file_path.exists():
+                return False
+            
+            # 초기 파일 크기 체크
+            initial_size = file_path.stat().st_size
+            if initial_size == 0:
+                return False  # 빈 파일은 불안정
+            
+            # 대용량 파일의 경우 더 긴 대기 시간
+            if initial_size > 100 * 1024 * 1024:  # 100MB 초과
+                wait_time = 5.0  # 5초 대기
+                
+            logger.info(f"🕒 Checking file stability for {file_path.name} ({initial_size:,} bytes)...")
+            
+            # 비동기 대기
+            await asyncio.sleep(wait_time)
+            
+            # 최종 크기와 비교
+            try:
+                final_size = file_path.stat().st_size
+                stable = initial_size == final_size and final_size > 0
+                
+                if stable:
+                    logger.info(f"✅ File stable: {file_path.name}")
+                else:
+                    logger.warning(f"⚠️  File still copying: {file_path.name} ({initial_size} → {final_size})")
+                
+                return stable
+            except FileNotFoundError:
+                return False  # 파일이 사라짐
+                
+        except Exception as e:
+            logger.error(f"Error checking file stability: {e}")
+            return False
+    
     async def _process_changes(self, changes):
-        """Process batched file changes."""
+        """Process batched file changes with stability check."""
         if not changes:
             return
             
@@ -466,6 +510,14 @@ class WatchFilesMonitor:
         changes_by_type = {'added': [], 'modified': [], 'deleted': []}
         for change in changes:
             change_type = change['type']
+            file_path = Path(change['path'])
+            
+            # 추가/수정된 파일의 경우 안정성 체크
+            if change_type in ['added', 'modified'] and file_path.suffix.lower() in ['.pdf']:
+                if not await self._is_file_stable(file_path):
+                    logger.warning(f"⏸️  Skipping unstable file: {file_path.name}")
+                    continue
+            
             if change_type in changes_by_type:
                 changes_by_type[change_type].append(change['path'])
         
