@@ -24,6 +24,31 @@ echo "- CPU cores: $(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 
 if [[ "$OSTYPE" == "darwin"* ]]; then
     echo "- GPU: $(system_profiler SPDisplaysDataType 2>/dev/null | grep 'Chipset Model:' | head -1 | cut -d: -f2 | xargs || echo 'Unknown')"
 fi
+
+# Check Java version for KoNLPy compatibility
+echo ""
+echo "Checking Java for Korean tokenizer (KoNLPy):"
+if command -v java &> /dev/null; then
+    JAVA_VERSION=$(java -version 2>&1 | head -n 1 | cut -d'"' -f2 | cut -d'.' -f1)
+    echo "- Java version: $(java -version 2>&1 | head -n 1)"
+    
+    if [ "$JAVA_VERSION" -ge 17 ]; then
+        echo "⚠️  WARNING: Java $JAVA_VERSION detected. KoNLPy works best with Java 8-11."
+        echo "   Korean BM25 tokenizer will fall back to regex-based tokenization."
+        echo "   For better Korean text analysis, consider installing Java 11:"
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            echo "   brew install openjdk@11"
+        fi
+    else
+        echo "✅ Java version compatible with KoNLPy"
+    fi
+else
+    echo "⚠️  Java not found. Korean BM25 will use regex tokenizer."
+    echo "   For better Korean text analysis, install Java 11:"
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        echo "   brew install openjdk@11"
+    fi
+fi
 echo ""
 
 # Check if uv is installed
