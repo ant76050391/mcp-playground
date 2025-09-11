@@ -93,21 +93,45 @@ class PDFExtractor(BaseExtractor):
     def _extract_pdf_content(self, file_path: Path) -> str:
         """Extract PDF content using PyMuPDF4LLM."""
         try:
-            # Use PyMuPDF4LLM to extract markdown-formatted text
-            # This preserves document structure better than plain text
-            md_text = self.pymupdf4llm.to_markdown(
-                str(file_path),
-                # Advanced options
-                extract_images=self.extract_images,
-                extract_tables=self.extract_tables,
-                # Output formatting
-                page_chunks=self.page_chunks,
-                write_images=False,  # Don't write image files
-                # Performance options
-                margins=(0, 0, 0, 0),  # No margins for better text extraction
-            )
+            # Convert to absolute path to avoid path resolution issues
+            abs_path = file_path.resolve()
+            if not abs_path.exists():
+                raise FileNotFoundError(f"PDF file not found: {abs_path}")
             
-            if not md_text or md_text.strip() == "":
+            # Check PyMuPDF4LLM version and use compatible parameters
+            try:
+                # Try with advanced parameters (newer versions)
+                md_text = self.pymupdf4llm.to_markdown(
+                    str(abs_path),
+                    # Advanced options (if supported)
+                    extract_images=self.extract_images,
+                    extract_tables=self.extract_tables,
+                    # Output formatting
+                    page_chunks=self.page_chunks,
+                    write_images=False,  # Don't write image files
+                    # Performance options
+                    margins=(0, 0, 0, 0),  # No margins for better text extraction
+                )
+            except TypeError as te:
+                # Fallback for older versions that don't support extract_images
+                logger.warning(f"Advanced parameters not supported in this PyMuPDF4LLM version: {te}")
+                try:
+                    md_text = self.pymupdf4llm.to_markdown(
+                        str(abs_path),
+                        # Basic options only
+                        page_chunks=self.page_chunks,
+                        write_images=False
+                    )
+                except TypeError:
+                    # Even more basic fallback - minimal parameters
+                    logger.warning("Using minimal parameters for PyMuPDF4LLM extraction")
+                    md_text = self.pymupdf4llm.to_markdown(str(abs_path))
+            
+            # Handle case where PyMuPDF4LLM returns a list instead of string
+            if isinstance(md_text, list):
+                md_text = '\n'.join(str(item) for item in md_text)
+            
+            if not md_text or (hasattr(md_text, 'strip') and md_text.strip() == ""):
                 logger.warning(f"No text extracted from PDF: {file_path}")
                 return ""
             
@@ -115,9 +139,14 @@ class PDFExtractor(BaseExtractor):
             
         except Exception as e:
             logger.error(f"PyMuPDF4LLM extraction failed for {file_path}: {e}")
-            # Fallback: try basic extraction without advanced features
+            # Fallback: try most basic extraction
             try:
-                md_text = self.pymupdf4llm.to_markdown(str(file_path))
+                md_text = self.pymupdf4llm.to_markdown(str(abs_path))
+                
+                # Handle list return type
+                if isinstance(md_text, list):
+                    md_text = '\n'.join(str(item) for item in md_text)
+                    
                 return md_text or ""
             except Exception as e2:
                 logger.error(f"Fallback extraction also failed for {file_path}: {e2}")
@@ -231,7 +260,12 @@ class FallbackPDFExtractor(BaseExtractor):
     
     def _extract_pdf_basic(self, file_path: Path) -> str:
         """Basic PDF text extraction using PyMuPDF."""
-        doc = self.fitz.open(str(file_path))
+        # Convert to absolute path to avoid path resolution issues
+        abs_path = file_path.resolve()
+        if not abs_path.exists():
+            raise FileNotFoundError(f"PDF file not found: {abs_path}")
+        
+        doc = self.fitz.open(str(abs_path))
         text_content = []
         
         try:
