@@ -103,17 +103,14 @@ class PDFExtractor(BaseExtractor):
                 # Try with advanced parameters (newer versions)
                 md_text = self.pymupdf4llm.to_markdown(
                     str(abs_path),
-                    # Advanced options (if supported)
-                    extract_images=self.extract_images,
-                    extract_tables=self.extract_tables,
                     # Output formatting
                     page_chunks=self.page_chunks,
-                    write_images=False,  # Don't write image files
-                    # Performance options
-                    margins=(0, 0, 0, 0),  # No margins for better text extraction
+                    # Image handling (correct API parameters)
+                    write_images=self.extract_images,  # Write images if enabled
+                    ignore_images=not self.extract_images,  # Ignore images if disabled
                 )
             except TypeError as te:
-                # Fallback for older versions that don't support extract_images
+                # Fallback for older versions that don't support advanced parameters
                 logger.warning(f"Advanced parameters not supported in this PyMuPDF4LLM version: {te}")
                 try:
                     md_text = self.pymupdf4llm.to_markdown(

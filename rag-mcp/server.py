@@ -550,6 +550,7 @@ class RAGServer:
         self.text_extractor = None  # Multi-format text extraction engine
         self.vector_store = None  # ChromaDB vector storage
         self.documents = []  # Store documents for BM25 and reranker
+        self.document_file_mapping = {}  # Map document index to file path
         self.model_path = Path(__file__).parent / ".model" / "bge-m3-korean-q4_k_m-2.gguf"
         self.reranker_path = Path(__file__).parent / ".model" / "bge-reranker-v2-m3-ko-q4_k_m.gguf"
         self.config_path = Path(__file__).parent / "config.json"
@@ -585,9 +586,14 @@ class RAGServer:
             # Initialize text extraction engine
             extractor_start = time.time()
             logger.info("Initializing text extraction engine...")
+            
+            # Get file processing config with 1GB default
+            file_processing_config = self.config.get('file_processing', {})
+            max_file_size = file_processing_config.get('max_file_size', 1073741824)  # 1GB default
+            
             extraction_config = self.config.get('text_extraction', {
                 'max_workers': min(32, os.cpu_count() + 4),
-                'max_file_size': 100 * 1024 * 1024,  # 100MB
+                'max_file_size': max_file_size,
                 'use_multiprocessing': False
             })
             self.text_extractor = TextExtractionEngine(extraction_config)
@@ -697,6 +703,7 @@ class RAGServer:
             scan_start = time.time()
             logger.info("Performing initial document extraction...")
             self.documents = []  # Reset document list
+            self.document_file_mapping = {}  # Reset document mapping
             
             # Extract text from all supported documents using TextExtractionEngine
             try:
@@ -718,7 +725,9 @@ class RAGServer:
                         # Use cleaned content for RAG
                         clean_content = doc.get_clean_content()
                         if clean_content:
+                            doc_index = len(self.documents)
                             self.documents.append(clean_content)
+                            self.document_file_mapping[doc_index] = doc.file_path
                             
                             # Prepare document for vector store
                             if self.vector_store:
@@ -872,102 +881,205 @@ class RAGServer:
             return []
     
     async def _handle_file_changes(self, changes: Dict[str, List]):
-        """Handle file changes detected by watchfiles using TextExtractionEngine."""
-        logger.info("🔄 File changes detected, updating document index...")
+        """Handle file changes with differential processing for optimal performance."""
+        logger.info("🔄 File changes detected, processing differential updates...")
         
-        # Re-extract all documents when changes are detected
-        reload_start = time.time()
+        total_start = time.time()
+        changes_processed = 0
+        
         try:
-            self.documents = []
-            
-            def progress_callback(processed, total, result):
-                if processed % 5 == 0 or processed == total:
-                    logger.info(f"Re-extracted {processed}/{total} documents...")
-            
-            # Use TextExtractionEngine to re-extract all documents
-            extraction_result = self.text_extractor.extract_directory(
-                self.documents_path,
-                recursive=True,
-                include_hidden=False,
-                progress_callback=progress_callback
-            )
-            
-            # Process successful extractions and update vector store
-            vector_docs = []
-            for doc in extraction_result.documents:
-                if doc.success and doc.content.strip():
-                    clean_content = doc.get_clean_content()
-                    if clean_content:
-                        self.documents.append(clean_content)
-                        
-                        # Prepare document for vector store
-                        if self.vector_store and self.embedding_model:
-                            try:
-                                embedding = self.embedding_model.encode(clean_content[:1000])  # Limit context for embedding
-                                
-                                # Create metadata
-                                metadata = self.vector_store.create_document_metadata(
-                                    file_path=doc.file_path,
-                                    file_type=str(doc.metadata.file_type.value) if hasattr(doc.metadata.file_type, 'value') else str(doc.metadata.file_type),
-                                    extractor_type=doc.metadata.extractor_name,
-                                    chunk_index=0
-                                )
-                                
-                                vector_docs.append({
-                                    'content': clean_content,
-                                    'file_path': doc.file_path,
-                                    'embedding': embedding,
-                                    'metadata': metadata
-                                })
-                                
-                            except Exception as e:
-                                logger.warning(f"Failed to prepare vector document for {doc.file_path}: {e}")
-            
-            logger.info(f"📚 Re-extracted {len(self.documents)} documents")
-            logger.info(f"📊 Extraction success rate: {extraction_result.success_rate:.1f}%")
-            
-            # Update ChromaDB vector store with efficient batch upsert
-            if self.vector_store and vector_docs:
-                try:
-                    vector_start = time.time()
+            # Process each change type separately for efficiency
+            for change_type, file_paths in changes.items():
+                if not file_paths:
+                    continue
                     
-                    # Create VectorDocument objects for batch upsert
-                    from vector_store.chroma_store import VectorDocument
-                    vector_documents = []
-                    
-                    for doc_data in vector_docs:
-                        vector_doc = VectorDocument(
-                            id="",  # Let the vector store generate the ID
-                            content=doc_data['content'],
-                            embedding=doc_data['embedding'],
-                            metadata=doc_data['metadata']
-                        )
-                        vector_documents.append(vector_doc)
-                    
-                    # Efficient batch upsert
-                    upserted_ids = self.vector_store.upsert_documents(vector_documents)
-                    
-                    vector_elapsed = time.time() - vector_start
-                    logger.info(f"🗂️  Updated {len(upserted_ids)} documents in ChromaDB vector store (batch upsert)")
-                    logger.info(f"[TIMER] Vector store update took {vector_elapsed:.3f}s")
-                    
-                    # Log vector store stats
-                    stats = self.vector_store.get_collection_stats()
-                    logger.info(f"📊 Vector store total documents: {stats['total_documents']}")
-                    
-                except Exception as e:
-                    logger.error(f"Failed to update vector store: {e}")
-            
-            # Rebuild BM25 index if available
-            if self.documents and self.bm25_retriever:
-                self.bm25_retriever.build_index(self.documents)
-                logger.info("🔍 BM25 index rebuilt")
+                logger.info(f"📁 Processing {len(file_paths)} {change_type} files...")
                 
+                if change_type == 'deleted':
+                    changes_processed += await self._process_deleted_files(file_paths)
+                elif change_type == 'added':
+                    changes_processed += await self._process_added_files(file_paths)
+                elif change_type == 'modified':
+                    changes_processed += await self._process_modified_files(file_paths)
+            
+            # Rebuild BM25 index only if documents were actually changed
+            if changes_processed > 0 and self.bm25_retriever:
+                await self._rebuild_bm25_index()
+            
         except Exception as e:
             logger.error(f"Failed to handle file changes: {e}")
         
-        reload_elapsed = time.time() - reload_start
-        logger.info(f"[TIMER] File change processing took {reload_elapsed:.3f}s")
+        total_elapsed = time.time() - total_start
+        logger.info(f"[TIMER] Differential file processing took {total_elapsed:.3f}s ({changes_processed} files changed)")
+    
+    async def _process_deleted_files(self, file_paths: List[str]) -> int:
+        """Process deleted files by removing them from vector store and documents list."""
+        deleted_count = 0
+        
+        for file_path in file_paths:
+            try:
+                file_path_str = str(Path(file_path))
+                
+                # Remove from ChromaDB vector store
+                if self.vector_store:
+                    deleted_docs = self.vector_store.delete_documents_by_path(file_path_str)
+                    if deleted_docs > 0:
+                        logger.info(f"🗑️  Deleted {deleted_docs} vectors for {Path(file_path).name}")
+                
+                # Remove from documents list using mapping
+                removed_indices = [idx for idx, mapped_path in self.document_file_mapping.items() 
+                                 if mapped_path == file_path_str]
+                
+                if removed_indices:
+                    # Remove from documents list in reverse order to maintain indices
+                    for idx in sorted(removed_indices, reverse=True):
+                        if idx < len(self.documents):
+                            del self.documents[idx]
+                            del self.document_file_mapping[idx]
+                    
+                    # Reindex mapping after deletion
+                    self._reindex_document_mapping()
+                    
+                    logger.info(f"📚 Removed {len(removed_indices)} documents from memory for {Path(file_path).name}")
+                    deleted_count += 1
+                    
+            except Exception as e:
+                logger.error(f"Failed to process deleted file {file_path}: {e}")
+        
+        return deleted_count
+    
+    async def _process_added_files(self, file_paths: List[str]) -> int:
+        """Process newly added files by extracting and indexing them."""
+        added_count = 0
+        
+        for file_path in file_paths:
+            try:
+                added_count += await self._process_single_file(file_path, is_new=True)
+            except Exception as e:
+                logger.error(f"Failed to process added file {file_path}: {e}")
+        
+        return added_count
+    
+    async def _process_modified_files(self, file_paths: List[str]) -> int:
+        """Process modified files by updating their vectors and content."""
+        modified_count = 0
+        
+        for file_path in file_paths:
+            try:
+                # First remove old version
+                file_path_str = str(Path(file_path))
+                
+                if self.vector_store:
+                    self.vector_store.delete_documents_by_path(file_path_str)
+                
+                # Remove from documents list using mapping  
+                removed_indices = [idx for idx, mapped_path in self.document_file_mapping.items() 
+                                 if mapped_path == file_path_str]
+                
+                if removed_indices:
+                    # Remove from documents list in reverse order to maintain indices
+                    for idx in sorted(removed_indices, reverse=True):
+                        if idx < len(self.documents):
+                            del self.documents[idx]
+                            del self.document_file_mapping[idx]
+                    
+                    # Reindex mapping after deletion
+                    self._reindex_document_mapping()
+                
+                # Then add updated version
+                modified_count += await self._process_single_file(file_path, is_new=False)
+                
+            except Exception as e:
+                logger.error(f"Failed to process modified file {file_path}: {e}")
+        
+        return modified_count
+    
+    async def _process_single_file(self, file_path: str, is_new: bool = True) -> int:
+        """Process a single file: extract, embed, and index."""
+        try:
+            file_path_obj = Path(file_path)
+            str_file_path = str(file_path_obj)
+            
+            # Check if file is already processed (avoid duplicate processing)
+            if str_file_path in self.document_file_mapping.values():
+                logger.debug(f"File {file_path_obj.name} already processed, skipping")
+                return 0
+            
+            # Extract text from the single file
+            extraction_start = time.time()
+            extraction_result = self.text_extractor.extract_single(Path(file_path))
+            
+            if not extraction_result.success:
+                logger.warning(f"Failed to extract {file_path_obj.name}: {extraction_result.error_message}")
+                return 0
+            
+            clean_content = extraction_result.get_clean_content()
+            if not clean_content or not clean_content.strip():
+                logger.warning(f"No clean content extracted from {file_path_obj.name}")
+                return 0
+            
+            # Add to documents list
+            doc_index = len(self.documents)
+            self.documents.append(clean_content)
+            self.document_file_mapping[doc_index] = str(file_path_obj)
+            
+            # Process for vector store
+            if self.vector_store and self.embedding_model:
+                try:
+                    embed_start = time.time()
+                    embedding = self.embedding_model.encode(clean_content[:1000])  # Limit context
+                    embed_elapsed = time.time() - embed_start
+                    
+                    # Create metadata
+                    metadata = self.vector_store.create_document_metadata(
+                        file_path=str(file_path_obj),
+                        file_type=str(extraction_result.metadata.file_type.value) if hasattr(extraction_result.metadata.file_type, 'value') else str(extraction_result.metadata.file_type),
+                        extractor_type=extraction_result.metadata.extractor_name,
+                        chunk_index=0
+                    )
+                    
+                    # Upsert single document
+                    vector_start = time.time()
+                    self.vector_store.upsert_document(
+                        content=clean_content,
+                        file_path=str(file_path_obj),
+                        embedding=embedding,
+                        metadata=metadata
+                    )
+                    vector_elapsed = time.time() - vector_start
+                    
+                    action = "Added" if is_new else "Updated"
+                    logger.info(f"✅ {action} {file_path_obj.name} (extract: {time.time() - extraction_start:.3f}s, embed: {embed_elapsed:.3f}s, vector: {vector_elapsed:.3f}s)")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to process vector for {file_path}: {e}")
+            
+            return 1
+            
+        except Exception as e:
+            logger.error(f"Failed to process single file {file_path}: {e}")
+            return 0
+    
+    def _reindex_document_mapping(self):
+        """Reindex document mapping after deletions to maintain consistency."""
+        new_mapping = {}
+        for new_idx, old_idx in enumerate(sorted(self.document_file_mapping.keys())):
+            if old_idx < len(self.documents):
+                new_mapping[new_idx] = self.document_file_mapping[old_idx]
+        self.document_file_mapping = new_mapping
+    
+    async def _rebuild_bm25_index(self):
+        """Rebuild BM25 index from current documents."""
+        if not self.documents or not self.bm25_retriever:
+            return
+            
+        try:
+            index_start = time.time()
+            self.bm25_retriever.build_index(self.documents)
+            index_elapsed = time.time() - index_start
+            logger.info(f"🔍 BM25 index rebuilt with {len(self.documents)} documents ({index_elapsed:.3f}s)")
+        except Exception as e:
+            logger.error(f"Failed to rebuild BM25 index: {e}")
     
     async def start_monitoring(self):
         """Start file monitoring."""
@@ -1200,7 +1312,6 @@ async def main():
         logger.error(f"Failed to initialize server: {e}")
         return
     
-    server_start = time.time()
     logger.info("Server running on stdio - ready to accept MCP requests")
     
     async with stdio_server() as (read_stream, write_stream):

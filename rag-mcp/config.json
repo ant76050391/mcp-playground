@@ -38,5 +38,9 @@
     "ignore_paths": [".git", "__pycache__", ".DS_Store", ".file_tracker"],
     "debounce_ms": 100,
     "batch_delay_ms": 500
+  },
+  "file_processing": {
+    "max_file_size_mb": 1024,
+    "max_file_size": 1073741824
   }
 }

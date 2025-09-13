@@ -290,11 +290,10 @@ class ChromaDBVectorStore:
         try:
             # Find all documents for this file path
             results = self.collection.get(
-                where={"file_path": file_path},
-                include=['ids']
+                where={"file_path": file_path}
             )
             
-            if results['ids']:
+            if results and 'ids' in results and results['ids']:
                 self.collection.delete(ids=results['ids'])
                 logger.info(f"Deleted {len(results['ids'])} documents for {file_path}")
                 return len(results['ids'])
